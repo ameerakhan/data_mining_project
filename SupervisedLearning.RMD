@@ -1,0 +1,356 @@
+---
+title: "Supervised Learning"
+author: "Ameera Khan"
+date: "12/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+getwd()
+setwd("C:/Users/Ameera/Desktop/MABAN/CVTDM/Project")
+train <- read.csv("train.csv")
+valid <- read.csv("valid.csv")
+test <- read.csv("test.csv")
+news.df <- read.csv("cleaned_data_2.csv")
+summary(news.df$news.reg.df.shares)
+#removing identity column
+train<- train[-c(1)]
+valid <- valid[-c(1)]
+test <- test[-c(1)]
+train$popularity <- as.factor(ifelse(train[,2] > 1400,1,0))
+valid$popularity<- as.factor(ifelse(valid[,2] > 1400,1,0))
+test$popularity<- as.factor(ifelse(test[,2] > 1400,1,0))
+```
+
+# Supervised Learning 
+
+## In this section, methods of supervised learning will be applied in order to classify and predict the number of shares/ popularity of an article. Data is first normalized in order to produce meaningful results 
+```{r}
+#normalising data
+library(caret)
+library(Metrics)
+set.seed(9)
+#preprocessing training set
+trainprepoc <- preProcess(train[c(2:23)], method=c("center", "scale"))
+train.norm <- predict(trainprepoc,train[c(2:23)])
+train.norm <- data.frame(cbind(train$popularity, train.norm[,-1],  train[c(24:33)]))
+#preprocessing validaton set
+valid.norm <- predict(trainprepoc,valid[c(2:23)])
+valid.norm <- data.frame(cbind(valid$popularity, valid.norm[,-1], valid[c(24:33)]))
+
+#preprocessing test set
+test.norm <- predict(trainprepoc, test[c(2:23)])
+test.norm <- data.frame(cbind(test$popularity, test.norm[,-1], test[c(24:33)]))
+#removing the numerical shares predictor from original data
+train <- train[-c(2)]
+valid <- valid[-c(2)]
+test <- test[-(2)]
+```
+
+
+## 1. Multinomial Logistic Regression
+
+### When we have multiple classes, we can use the multinomial logistic regression which is an extension of the logistic regression. 
+
+```{r}
+library(tidyverse)
+#for multinomial regression, data needs to be turned to numeric.
+set.seed(9)
+fit_logit <- glm(train.popularity ~ ., data = train.norm, family = "binomial")
+options(scipen=999)
+summary(fit_logit)
+#predictionn
+
+#training
+set.seed(9)
+pred.logit.train <- data.frame(ifelse( (predict(fit_logit, train.norm[,-1], type = "response")) > 0.5, 1, 0))
+cm.logit.train <- confusionMatrix(as.factor(pred.logit.train[,1]), reference= train.norm[,1])
+#validation
+pred.logit.valid <- data.frame(ifelse( (predict(fit_logit, valid.norm[,-1], type = "response")) > 0.5, 1, 0))
+cm.logit.valid <- confusionMatrix(as.factor(pred.logit.valid[,1]), reference= valid.norm[,1])
+#test
+pred.logit.test <- data.frame(ifelse( (predict(fit_logit, test.norm[,-1], type = "response")) > 0.5, 1, 0))
+cm.logit.test<- confusionMatrix(as.factor(pred.logit.test[,1]), reference= test.norm[,1])
+#computing model accuracy
+str(train.norm$train.popularity)
+library(forecast)
+accuracy.logit.train <- forecast::accuracy(pred.logit.train[,1], as.numeric(as.character(train.norm$train.popularity)))
+accuracy.logit.valid<- forecast::accuracy(pred.logit.valid[,1], as.numeric(as.character(valid.norm$valid.popularity)))
+accuracy.logit.test <- forecast::accuracy(pred.logit.test[,1], as.numeric(as.character(test.norm$test.popularity)))
+```
+
+## 3. K-Nearest Neighbours
+```{r}
+set.seed(9)
+fit_knn1 <- train(form= train.popularity ~., data=train.norm, method="knn"
+                 , trControl = trainControl(method="none"), tuneGrid=data.frame(k=3))
+# Choosing the best k using cross-validation 
+train_control <- trainControl(method="cv", number=5)
+hp_knn <- data.frame(k=2:10)
+# Fit the KNN with different `k`'s
+fit_knn2 <- train(form= train.popularity ~., data=train.norm, method="knn", trControl = train_control, tuneGrid=hp_knn)
+fit_knn2
+library(ggplot2)
+ggplot(fit_knn2) + geom_line() + geom_smooth() + theme_light()
+#fitting model with optimal k = 10 
+#data already normalised so don't need center and scale 
+fit_knn3 <- train(form= train.popularity ~., data=train.norm, method="knn"
+                 , trControl = trainControl(method="none"), tuneGrid=data.frame(k=10))
+
+#predicting on training set
+pred.knn.train <- predict(fit_knn3, train.norm[,-1])
+cm.knn.train <- confusionMatrix(pred.knn.train, train.norm[,1], positive= '1')
+#predicting on validation set
+pred.knn.valid <- predict(fit_knn3, valid.norm[,-1])
+cm.knn.valid <- confusionMatrix(pred.knn.valid, valid.norm[,1], positive= '1')
+#predicting on validation set
+pred.knn.test <- predict(fit_knn3, test.norm[,-1])
+cm.knn.test <- confusionMatrix(pred.knn.test, test.norm[,1], positive= '1')
+# #computing model accuracy
+library(forecast)
+acc.knn.train <- forecast::accuracy(as.numeric(as.character(pred.knn.train )), as.numeric(as.character(train.norm$train.popularity)))
+acc.knn.valid <- forecast::accuracy(as.numeric(as.character(pred.knn.valid)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.knn.test <- forecast::accuracy(as.numeric(as.character(pred.knn.test)), as.numeric(as.character(test.norm$test.popularity)))
+```
+## 5. Classification Trees
+```{r}
+library(rpart)
+library(rattle)
+#Base Model
+set.seed(9)
+fit_ct <- rpart(popularity ~ ., data = train, method = "class")
+# Examine the complexity plot
+plot(fit_ct)
+text(fit_ct)
+printcp(fit_ct)
+plotcp(fit_ct)
+# Pruning the classification tree based on the optimal cp value
+fit_ct_prune <- prune(fit_ct, cp = fit_ct$cptable[which.min(fit_ct$cptable[,"xerror"]),"CP"] )
+fancyRpartPlot(fit_ct_prune, digits=2, palettes = c("Purples", "Oranges"))
+#attributes of the fitted tree
+fit_ct_prune$variable.importance
+treelength <-length(fit_ct_prune$frame$var[fit_ct_prune$frame$var == "<leaf>"])
+print(treelength)
+fit_ct_prune$numresp
+# Compute the accuracy of the pruned tree
+pred_ct_train <- predict(fit_ct_prune, train, type = "class")
+cm.ct.train<-confusionMatrix(pred_ct_train , reference= train[,1], positive = '1')
+pred_ct_valid <- predict(fit_ct_prune, valid, type = "class")
+cm.ct.valid<-confusionMatrix(pred_ct_valid , reference= valid[,1], positive = '1')
+pred_ct_test <- predict(fit_ct_prune, test, type = "class")
+cm.ct.test<-confusionMatrix(pred_ct_test , reference= test[,1], positive = '1')
+
+#computing accuracies 
+acc.ct.train <- forecast::accuracy(as.numeric(as.character(pred_ct_train )), as.numeric(as.character(train.norm$train.popularity)))
+acc.ct.valid <- forecast::accuracy(as.numeric(as.character(pred_ct_valid)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.ct.test <- forecast::accuracy(as.numeric(as.character(pred_ct_test)), as.numeric(as.character(test.norm$test.popularity)))
+```
+## 4. Boosted Trees
+```{r}
+library(adabag)
+library(randomForest)
+#boosting
+set.seed(9)
+fit_boost <- boosting(popularity~., data = train)
+#fitting the boosted tree
+pred.boost.train <- predict(fit_boost , train, type="class")
+cm.boost.train <- confusionMatrix(factor(pred.boost.train$class ,levels=c(0,1)), train$popularity)
+pred.boost.valid <- predict(fit_boost , valid, type="class")
+cm.boost.valid <- confusionMatrix(factor(pred.boost.valid$class ,levels=c(0,1)), valid$popularity)
+pred.boost.test<- predict(fit_boost , test, type="class")
+cm.boost.test <- confusionMatrix(factor(pred.boost.test$class ,levels=c(0,1)), test$popularity)
+
+#computing accuracy 
+acc.boost.train <- forecast::accuracy(as.numeric(as.character(pred.boost.train$class)), as.numeric(as.character(train.norm$train.popularity)))
+acc.boost.valid <- forecast::accuracy(as.numeric(as.character(pred.boost.valid$class)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.boost.test <- forecast::accuracy(as.numeric(as.character(pred.boost.test$class)), as.numeric(as.character(test.norm$test.popularity)))
+
+```
+## 5. Bagged Trees
+
+```{r}
+#bagginng
+set.seed(9)
+fit_bag <- bagging(popularity~., data = train)
+#fitting the model
+pred.bag.train <- predict(fit_bag , train, type="class")
+cm.bag.train <- confusionMatrix(factor(pred.bag.train$class,levels=c(0,1)), train$popularity)
+pred.bag.valid <- predict(fit_bag , valid, type="class")
+cm.bag.valid <- confusionMatrix(factor(pred.bag.valid$class,levels=c(0,1)), valid$popularity)
+pred.bag.test <- predict(fit_bag , test, type="class")
+cm.bag.test <- confusionMatrix(factor(pred.bag.test$class,levels=c(0,1)), test$popularity)
+#computing accuracies
+acc.bag.train <- forecast::accuracy(as.numeric(as.character(pred.bag.train$class)), as.numeric(as.character(train.norm$train.popularity)))
+acc.bag.valid <- forecast::accuracy(as.numeric(as.character(pred.bag.valid$class)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.bag.test <- forecast::accuracy(as.numeric(as.character(pred.bag.test$class)), as.numeric(as.character(test.norm$test.popularity)))
+
+```
+
+## 6. Random Forest
+
+
+```{r}
+#randomforest will be utilised with smaller samples of training validation and test in order be compatible with the machine's computing power 
+library(dplyr)
+set.seed(9)
+train.sample <- data.frame(sample_n(train, 19231*0.3))
+valid.sample <- data.frame(sample_n(valid, 11539*0.3))
+test.sample <- data.frame(sample_n(test, 7693*0.3))
+fit_rf <- randomForest(popularity ~ ., data = train.sample,
+                       mtry=6,proximity=TRUE,importance=TRUE)
+#predicting the model
+pred.rf.train<- predict(fit_rf, train )
+cm.rf.train <- confusionMatrix(factor(pred.rf.train,levels=c(0,1)), train$popularity)
+pred.rf.valid<- predict(fit_rf, valid )
+cm.rf.valid <- confusionMatrix(factor(pred.rf.valid,levels=c(0,1)), valid$popularity)
+pred.rf.test<- predict(fit_rf, test )
+cm.rf.test <- confusionMatrix(factor(pred.rf.test,levels=c(0,1)), test$popularity)
+#accuracies
+acc.rf.train <- forecast::accuracy(as.numeric(as.character(pred.rf.train)), as.numeric(as.character(train.norm$train.popularity)))
+acc.rf.valid <- forecast::accuracy(as.numeric(as.character(pred.rf.valid)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.rf.test <- forecast::accuracy(as.numeric(as.character(pred.rf.test)), as.numeric(as.character(test.norm$test.popularity)))
+```
+## Support Vector Machine
+```{r}
+set.seed(9)
+svm_trctrl <- trainControl(method = "repeatedcv", number = 5)
+fit_svm <- train(train.popularity ~., data = train.norm, method = "svmLinear",
+                    trControl=svm_trctrl,
+                    tuneLength = 10)
+#predictiions
+pred.svm.train <- predict(fit_svm, train.norm)
+cm.svm.train <- confusionMatrix(pred.svm.train, train.norm[,1] )
+pred.svm.valid <- predict(fit_svm, valid.norm)
+cm.svm.valid <- confusionMatrix(pred.svm.valid, valid.norm[,1] )
+pred.svm.test<- predict(fit_svm, test.norm)
+cm.svm.test <- confusionMatrix(pred.svm.test, test.norm[,1] )
+#accuracies 
+acc.cvm.train <- forecast::accuracy(as.numeric(as.character(pred.cvm.train)), as.numeric(as.character(train.norm$train.popularity)))
+acc.cvm.valid <- forecast::accuracy(as.numeric(as.character(pred.cvm.valid)), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.cvm.test <- forecast::accuracy(as.numeric(as.character(pred.cvm.test)), as.numeric(as.character(test.norm$test.popularity)))
+```
+
+
+## Keras Neural Network
+
+```{r}
+library(keras)
+library(varhandle)
+#converting the dataframes to be compatible with the training fit function 
+##training 
+train.matrix <- data.matrix(train.norm[,-1])
+popularity.train <- to.dummy(as.factor(array(train.norm [,1])),"popularity.train")
+##training 
+valid.matrix <- data.matrix(valid.norm[,-1])
+popularity.valid <- as.factor(array(valid.norm [,1]))
+#test data transformation 
+test.matrix <- data.matrix(test.norm [,-1])
+popularity.test <- as.factor(array(test.norm [,1]))
+
+# set.seed(9)
+# model = keras_model_sequential()
+# 
+# set.seed(9)
+# model %>%
+#   layer_dense(units=1,activation = "sigmoid",input_shape = c(10))
+# 
+# set.seed(9)
+# model %>% compile(loss="mse", optimizer=optimizer_rmsprop())
+# 
+# model %>% summary()
+set.seed(9)
+model <- keras_model_sequential()
+set.seed(9)
+ model %>%
+# Input layer
+ layer_dense(units = 256, activation = 'relu', input_shape =  ncol(train.matrix)) %>% 
+ layer_dropout(rate = 0.4) %>% 
+# Hidden layer
+ layer_dense(units = 75, activation = 'relu') %>%
+# Output layer
+ layer_dropout(rate = 0.3) %>%
+ layer_dense(units = 2, activation = 'sigmoid')
+#compiling the model
+ set.seed(9)
+ history <- model %>% compile(
+ loss = 'binary_crossentropy',
+ optimizer = 'adam',
+ metrics = c('accuracy')
+)
+model %>% summary()
+
+#training the model using training data 
+epochs <- 150
+set.seed(9)
+fit_nnet <- model %>% fit(
+ train.matrix,
+ popularity.train,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0)
+#predictions
+set.seed(9)
+pred.nnet.train <- data.frame(model %>% predict_classes(train.matrix))
+cm.nnet.train <- confusionMatrix(as.factor(pred.nnet.train[,1]), train$popularity)
+pred.nnet.valid <- data.frame(model %>% predict_classes(valid.matrix))
+cm.nnet.valid <- confusionMatrix(as.factor(pred.nnet.valid[,1]), valid$popularity)
+pred.nnet.test <- data.frame(model %>% predict_classes(test.matrix))
+cm.nnet.test <- confusionMatrix(as.factor(pred.nnet.test[,1]), test$popularity)
+#accuracies
+acc.nnet.train <- forecast::accuracy(pred.nnet.train[,1], as.numeric(as.character(train.norm$train.popularity)))
+acc.nnet.valid <- forecast::accuracy(pred.nnet.valid[,1], as.numeric(as.character(valid.norm$valid.popularity)))
+acc.nnet.test <- forecast::accuracy(pred.nnet.test[,1], as.numeric(as.character(test.norm$test.popularity)))
+```
+
+## Ensemble using Majority Votes
+
+```{r}
+model_labels <- c("Logistic_Regression", "KNN", "Class_Tree", "Boosted_Tree", "Bagged_Tree", "Random_Forest", "SVM", "Neural_Network", "Ensemble")
+#creating dataframe for training set predictions
+set.seed(9)
+predictions.training <- data.frame(cbind(pred.logit.train[,1], as.numeric(as.character(pred.knn.train)), as.numeric(as.character(pred_ct_train)), as.numeric(as.character(factor(pred.boost.train$class ,levels=c(0,1)))), as.numeric(as.character(factor(pred.bag.train$class,levels=c(0,1)))), as.numeric(as.character(factor(pred.rf.train,levels=c(0,1)))), as.numeric(as.character(pred.svm.train)), (pred.nnet.train[,1])))
+#creating dataframe for validation set predictions
+set.seed(9)
+predictions.validation <- data.frame(cbind(pred.logit.valid[,1], as.numeric(as.character(pred.knn.valid)), as.numeric(as.character(pred_ct_valid)), as.numeric(as.character(factor(pred.boost.valid$class ,levels=c(0,1)))), as.numeric(as.character(factor(pred.bag.valid$class,levels=c(0,1)))), as.numeric(as.character(factor(pred.rf.valid,levels=c(0,1)))), as.numeric(as.character(pred.svm.valid)), (pred.nnet.valid[,1])))
+#creatiing dataframe for test set predictions 
+set.seed(9)
+predictions.testing <- data.frame(cbind(pred.logit.test[,1], as.numeric(as.character(pred.knn.test)), as.numeric(as.character(pred_ct_test)), as.numeric(as.character(factor(pred.boost.test$class ,levels=c(0,1)))), as.numeric(as.character(factor(pred.bag.test$class,levels=c(0,1)))), as.numeric(as.character(factor(pred.rf.test,levels=c(0,1)))), as.numeric(as.character(pred.svm.test)), (pred.nnet.test[,1])))
+
+#Majority Vote for Training 
+mj.train <- rowMeans(predictions.training[1:8])
+mj.vote.train <- data.frame(ifelse(mj.train > 0.5, 1, 0))
+predictions.training$X9 <- mj.vote.train[,1]
+cm.mj.train<- confusionMatrix( as.factor(predictions.training$X9), train[,1] )
+
+#Majority Vote for Validation
+mj.valid <- rowMeans(predictions.validation[1:8])
+mj.vote.valid <- data.frame(ifelse(mj.valid > 0.5, 1, 0))
+predictions.validation$X9 <- mj.vote.valid[,1]
+cm.mj.valid<- confusionMatrix( as.factor(predictions.validation$X9), valid[,1] )
+
+#Majority Vote for Test
+mj.test <- rowMeans(predictions.testing[1:8])
+mj.vote.test <- data.frame(ifelse(mj.test> 0.5, 1, 0))
+predictions.testing$X9 <- mj.vote.test[,1]
+cm.mj.test<- confusionMatrix( as.factor(predictions.testing$X9), test[,1] )
+
+
+#accuracies 
+acc.mj.train <- forecast::accuracy(as.numeric(as.character(mj.vote.train[,1])), as.numeric(as.character(train.norm$train.popularity)))
+acc.mj.valid <- forecast::accuracy(as.numeric(as.character(mj.vote.valid[,1])), as.numeric(as.character(valid.norm$valid.popularity)))
+acc.mj.test <- forecast::accuracy(as.numeric(as.character(mj.vote.test[,1])), as.numeric(as.character(test.norm$test.popularity)))
+#formatting the names of the prediction data frames 
+colnames(predictions.training) <- model_labels
+colnames(predictions.validation) <- model_labels
+colnames(predictions.testing) <- model_labels
+
+write.csv(predictions.training,'training_predictions.csv')
+write.csv(predictions.validation, 'validation_predictions.csv')
+write.csv(predictions.testing,'test_predictions.csv')
+
+```
+## 7. Comparison 

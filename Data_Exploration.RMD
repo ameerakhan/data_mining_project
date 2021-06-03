@@ -1,0 +1,417 @@
+---
+title: "Data Exploration"
+author: "Ameera Khan"
+date: "11/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Contents:
+### 1. Initial Data Visualisation
+### 2. Data Transformation and Cleaning 
+### 3. Dimension Reduction 
+### 4. Principle Component Analysis 
+
+
+### The following libraries have been utilised for this analysis. 
+```{r }
+library(ggplot2)
+#library(gplots)
+library(naniar)
+library(formattable)
+library(packHV) #for boxplot and histogram on one page
+library(ggpubr)
+#library(xlsx)
+library(scales)
+library(forcats)
+library(reshape)
+library(reshape2)
+library(bReeze)
+library(corrplot)
+library(skimr)
+```
+
+### An initial look at the data
+
+```{r}
+getwd()
+setwd("C:/Users/khan_/Documents/MABAN/CVTDM/Project")
+news.df <- read.csv("OnlineNewsPopularity.csv")
+### Missing Values Check: no missing values 
+gg_miss_var(news.df)
+str(news.df)
+### the url and time delta can be removed from the data frame as they are identity variables
+news.df <- news.df[-c(1,2)]
+formattable(head(news.df))
+```
+
+### Seeing as there are 59 variables, it is more suitable to segment the larger data set into 7 smaller ones 
+
+## Segment 1: Words and References 
+
+### It can be seen that there are some articles which have no words. This seems unlikely and can distort the outcome so all articles with 0 words will be removed. In addition to this, there are outliers exhibited in the "Number of Token Words in Title". Therefore, such outliers will be removed (i.e, all those values above the threshold of the 3rd Quartile (75% of the frequency)).
+
+### In the references segment, It is evident that the number of videos exhibits skewness, later on, it can possibly be transformed. In addition to this, there are outliers in "Average Token Length" and "Number of Keywords". Using the same threshold, they will be removed.
+``` {r}
+words.seg <- data.frame(news.df[,(1:11)])
+str(words.seg)
+#Summary Statistics
+words.sumstat <- data.frame( mean=sapply(words.seg[,1:11], mean), 
+                             median=sapply(words.seg[,1:11], median), 
+                             min=sapply(words.seg[,1:11], min), 
+                             max=sapply(words.seg[,1:11], max), 
+                             sd=sapply(words.seg[,1:11], sd) )
+formattable(words.sumstat)
+#frequency distribution 
+par(mfrow=c(3,4))
+hist_boxplot(words.seg$n_tokens_title, freq = TRUE, density = TRUE, main = "Number of Token Words in Title",
+  xlab = "Number of Token Words in Title", ylab = "Frequency")
+
+hist_boxplot(words.seg$n_tokens_content, freq = TRUE, density = TRUE, main = "Number of Token Words in Article",
+  xlab = "Number of Token Words in Article", ylab = "Frequency")
+
+hist_boxplot(words.seg$n_unique_tokens, freq = TRUE, density = TRUE, main = "Rate of Unique Words",
+  xlab = "Rate of Uniqe Words", ylab = "Frequency")
+
+hist_boxplot(words.seg$n_non_stop_words, freq = TRUE, density = TRUE, main = "Rate of Non-Stop Words",
+  xlab = "Rate of Non-Stop Words", ylab = "Frequency")
+
+hist_boxplot(words.seg$n_non_stop_words, freq = TRUE, density = TRUE, main = "Rate of Unique & Non-Stop Words",
+  xlab = "Rate of Unique & Non-Stop Words", ylab = "Frequency")
+
+#References
+
+hist_boxplot(words.seg$num_hrefs, freq = TRUE, density = TRUE, main = "Number of Links",
+  xlab = "Number of Links", ylab = "Frequency")
+
+hist_boxplot(words.seg$num_self_hrefs, freq = TRUE, density = TRUE, main = "Number of Links to Other Articles ",
+  xlab = "Number of Links to Other Articles", ylab = "Frequency")
+
+hist_boxplot(words.seg$num_imgs, freq = TRUE, density = TRUE, main = "Number of Images ",
+  xlab = "Number of Images", ylab = "Frequency")
+
+hist_boxplot(words.seg$num_videos, freq = TRUE, density = TRUE, main = "Number of Videos",
+  xlab = "Number of Videos", ylab = "Frequency")
+
+hist_boxplot(words.seg$average_token_length, freq = TRUE, density = TRUE, main = "Average Token Length", xlab = "Average Token Length", ylab = "Frequency")
+
+hist_boxplot(words.seg$num_keywords, freq = TRUE, density = TRUE, main = "Number of Keywords",xlab = "Number of Keywords", ylab = "Frequency")
+
+
+
+```
+
+
+
+## Segment 2: Type of Article / Genre
+
+```{r}
+
+genre.seg <-data.frame(news.df[,12:17])
+str(genre.seg)
+
+#Summary Statistics
+genre.sumstat <- data.frame( mean=sapply(genre.seg[,1:6], mean), 
+                             median=sapply(genre.seg[,1:6], median), 
+                             min=sapply(genre.seg[,1:6], min), 
+                             max=sapply(genre.seg[,1:6], max), 
+                             sd=sapply(genre.seg[,1:6], sd) )
+formattable(genre.sumstat)
+```
+```{r}
+
+melt_genre <- melt(genre.seg )
+head(melt_genre)
+p<-ggplot(melt_genre, aes(x=reorder(variable,-value), y=value, fill=variable)) +
+  geom_bar(stat="identity")+ xlab("Genre") +ylab("Number of Shares") + theme_minimal() 
+p + scale_fill_brewer(palette="Dark2") + theme(axis.text.x = element_text(angle = 90)) + scale_y_continuous(labels = comma) 
+
+```
+
+## Segment 3: Key words
+
+### It can be seen that the "Best Keyword (max.shares)" variable is skewed to the right, hence it can be transformed using the logarithmic function as well. 
+
+```{r}
+keywords <- news.df[,c(18:26)]
+str(keywords)
+keywords.sumstat <- data.frame( mean=sapply(keywords[,1:9], mean), 
+                             median=sapply(keywords[,1:9], median), 
+                             min=sapply(keywords[,1:9], min), 
+                             max=sapply(keywords[,1:9], max), 
+                             sd=sapply(keywords[,1:9], sd) )
+formattable(keywords.sumstat)
+#Histograms and bar charts 
+ par(mfrow=c(3,3))
+hist_boxplot(keywords$kw_min_min, freq = TRUE, density = TRUE, main = "Worst keyword (min.shares)|", xlab = "Worst keyword (min. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_max_min, freq = TRUE, density = TRUE, main = "Worst keyword (max shares)", xlab = "Worst keyword (max shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_avg_min, freq = TRUE, density = TRUE, main = "Worst keyword (avg.shares)|", xlab = "Worst keyword (avg. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_min_max, freq = TRUE, density = TRUE, main = "Best keyword (min. shares)", xlab = "Best keyword (min. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_max_max, freq = TRUE, density = TRUE, main = " Best keyword (max. shares)", xlab = " Best keyword (max. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_avg_max, freq = TRUE, density = TRUE, main = "Best keyword (avg. shares)", xlab = "Best keyword (avg. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_min_avg, freq = TRUE, density = TRUE, main = "Avg. keyword (min. shares)", xlab = "Avg. keyword (min. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_max_avg, freq = TRUE, density = TRUE, main = "Avg. keyword (max. shares)", xlab = "Avg. keyword (max. shares)", ylab = "Frequency" )
+hist_boxplot(keywords$kw_avg_avg, freq = TRUE, density = TRUE, main = "Avg. keyword (avg. shares)|", xlab = "Avg. keyword (avg. shares)", ylab = "Frequency" )
+
+```
+
+## Segment 4: Self Referenced
+```{r}
+self_reference <- news.df[,27:29]
+self_reference.sumstat <- data.frame( mean=sapply(self_reference[,1:3], mean), 
+                             median=sapply(self_reference[,1:3], median), 
+                             min=sapply(self_reference[,1:3], min), 
+                             max=sapply(self_reference[,1:3], max), 
+                             sd=sapply(self_reference[,1:3], sd) )
+formattable(self_reference.sumstat)
+##bar chart for the day of the week
+melt_sr <- melt(self_reference )
+head(melt_sr)
+q<-ggplot(melt_sr, aes(x=reorder(variable,-value), y=value, fill=variable)) +
+  geom_bar(stat="identity")+ xlab("Self Referenced Articles by Type") +ylab("Number of Shares") + theme_minimal() 
+q + scale_fill_brewer(palette="Dark2") + theme(axis.text.x = element_text(angle = 90)) + scale_y_continuous(labels = comma) 
+```
+
+## Segment 5: Day of the Week
+```{r}
+week <- news.df[,30:37]
+week.sumstat <- data.frame( mean=sapply(week[,1:8], mean), 
+                             median=sapply(week[,1:8], median), 
+                             min=sapply(week[,1:8], min), 
+                             max=sapply(week[,1:8], max), 
+                             sd=sapply(week[,1:8], sd) )
+formattable(week.sumstat)
+colnames(week) <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Weekend")
+melt_week <- melt(week)
+head(melt_week)
+s<-ggplot(melt_week, aes(x=reorder(variable,-value), y=value, fill=variable)) +
+  geom_bar(stat="identity")+ xlab("Day of the Week") +ylab("Number of Shares") + theme_minimal() 
+s + scale_fill_brewer(palette="Dark2") + theme(axis.text.x = element_text(angle = 90)) + scale_y_continuous(labels = comma)
+```
+
+## Segment 6 : Closeness to LDA Topic 
+```{r}
+LDAtopic <- news.df[,38:42]
+#summary statistics
+LDA.sumstat <- data.frame( mean=sapply(LDAtopic[,1:5], mean), 
+                             median=sapply(LDAtopic[,1:5], median), 
+                             min=sapply(LDAtopic[,1:5], min), 
+                             max=sapply(LDAtopic[,1:5], max), 
+                             sd=sapply(LDAtopic[,1:5], sd) )
+formattable(LDA.sumstat)
+#creating ID variable for melting the dataframe 
+LDAtopic$id <- c(1:39644)
+melt_LDA<-melt(LDAtopic,id="id")
+#bar plot
+r<-ggplot(melt_LDA, aes(x=reorder(variable,-value), y=value, fill=variable)) +
+  geom_bar(stat="identity")+ xlab("Closeness to LDA Topic (0 to 5)") +ylab("Number of Shares") + theme_minimal() 
+r + scale_fill_brewer(palette="Dark2") + theme(axis.text.x = element_text(angle = 90)) + scale_y_continuous(labels = comma) 
+
+```
+## Segment 7: Sentiments
+```{r}
+senti <- news.df[,43:58]
+senti.sumstat <- data.frame( mean=sapply(senti[,1:16], mean), 
+                             median=sapply(senti[,1:16], median), 
+                             min=sapply(senti[,1:16], min), 
+                             max=sapply(senti[,1:16], max), 
+                             sd=sapply(senti[,1:16], sd) )
+formattable(senti.sumstat)
+```
+## Segment 8: The predictor: Number of Shares
+
+### Given the large variation in the dependent variable, it can be converted to a classifier which measures popularity based on which quartile the number of shares fall at.
+```{r}
+shares.df <- news.df[,59]
+summary(shares.df)
+options(scipen=999)
+hist_boxplot(shares.df, freq = TRUE, density = TRUE, main = "Number of Shares",
+  xlab = "Number of Shares", ylab = "Frequency")
+```
+
+## Transformations & Cleaning 
+```{r}
+initialrows <- 39644
+initialcols <- 61
+#1. Removing the rows with zero token (no words in the article)
+news.df <- news.df[!(news.df$n_tokens_content==0),]
+#2. Removing the dummies of monday and sunday as they are irrelevant 
+news.df <- news.df[-c(30, 36)]
+#3. Transforming skewed variables through log(x)
+#Number of videos 
+news.df$num_videos <- log(news.df$num_videos+0.01)
+#all self referenced category 
+news.df$self_reference_avg_sharess <- log(news.df$self_reference_avg_sharess +0.01)
+news.df$self_reference_max_shares<- log(news.df$self_reference_max_shares +0.01)
+news.df$self_reference_min_shares <- log(news.df$self_reference_min_shares +0.01)
+#4. Removing outliers in continuous variables (threshold: removing values greater than the mean+3*s.d )
+#creating a vector with the values of columns that contain outliers
+names(news.df)
+ outliers <- c(1, 10, 11, 22, 37, 42, 43, 44)
+FindOutliers <- function(data) {
+  lowerq = quantile(data)[2]
+  upperq = quantile(data)[4]
+  iqr = upperq - lowerq #Or use IQR(data)
+  # we identify extreme outliers
+  extreme.threshold.upper = (iqr * 3) + upperq
+  result <- which(data > extreme.threshold.upper)
+}
+
+#identifying the outliers
+temp1 <- FindOutliers(news.df$n_tokens_title)
+min(temp1)
+temp2 <- FindOutliers(news.df$average_token_length)
+#temp3 <- FindOutliers(news.df$num_keywords)##no outlier so this can be ignored
+#temp4 <- FindOutliers(news.df$kw_max_max)##no outlier so this can be ignored
+temp5<- FindOutliers(news.df$global_sentiment_polarity)
+temp6 <- FindOutliers(news.df$global_rate_positive_words)
+temp7 <- FindOutliers(news.df$global_rate_negative_words)
+temp8 <- FindOutliers(news.df$LDA_01)
+min(temp2)
+min(temp5)
+min(temp6)
+min(temp7)
+names(news.df)
+
+  for (j in 1:38463){
+    ifelse (news.df[j, 1] < 38004, news.df[j, 1]<- news.df[j, 1], news.df<- news.df[-c(j),] )
+
+  ifelse (news.df[j, 10] < 2156,
+          news.df[j, 10]<- news.df[j, 10],
+          news.df<- news.df[-c(j),] )
+
+    ifelse (news.df[j, 42] < 181, news.df[j, 42]<- news.df[j, 42],
+            news.df<-news.df[-c(j),])
+
+    ifelse (news.df[j, 43] < 181, news.df[j, 43]<- news.df[j, 43],
+            news.df<- news.df[-c(j),] )
+
+  ifelse (news.df[j, 44] < 67, news.df[j, 44]<- news.df[j, 44], news.df<- news.df[-c(j),])
+
+  ifelse (news.df[j, 37] < 59, news.df[j, 37]<-news.df[j, 37], news.df[-c(j),])
+    }
+
+#5. Transforming number of shares into a categorical variable with 2 classes, the cutoff being the median value of 14000 shares 
+
+news.df$popularity <- as.factor(ifelse(news.df$shares > 14000,1,0))
+
+#6. Looking at the data again after visualising 
+summary(news.df)
+gg_miss_var(news.df)
+news.df <- na.omit(news.df)
+
+#7. Organising the data according to the type of variables 
+names(news.df)
+cleaned.news.df <- data.frame(cbind(news.df[c(58,57,1,2,3,4,5,6,7,8,9,10,11,18,19,20,21,22,23,24,25,26,27,28,29,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,12,13,14,15,16,17,30,31,32,33,34,35 )]))
+names(cleaned.news.df)
+formattable(head(cleaned.news.df))
+
+#8. Saving new data frame to be used again for analysis
+write.csv(cleaned.news.df,'news_popularity_cleaned.csv')
+```
+### The variable types can be converted to factor etc when desired. For now, this data set has been cleaned and transformed. We can now move on to dimension reduction. 
+
+
+
+## Linear Regression
+
+### The linear regression below shows that initially, not many components are significant in terms of their influence in determining the number of shares. However, I will not remove them as that may create endogeniety or omitted variable bias. 
+```{r}
+
+news.reg.df <-read.csv("news_popularity_cleaned.csv")
+#removing the classifier and ID "X"
+news.reg.df <- news.reg.df[-c(1,2)]
+initial.reg <- lm(shares ~., data=news.reg.df)
+summary(initial.reg)
+```
+
+## Stepwise Regression 
+``` {r}
+install.packages("olsrr")
+install.packages("MASS")
+library(olsrr)
+library(MASS)
+```
+
+```{r include=FALSE}
+step_reg  <- ols_step_forward_p(initial.reg)
+fit_lmstep <- step(initial.reg)
+```
+
+```{r}
+# step_reg  <- ols_step_forward_p(initial.reg)
+# fit_lmstep <- step(initial.reg)
+vars <- fit_lmstep$coefficients
+vars_names <- names(vars)
+#using these coefficients to create a new dataframe
+d2 <- subset( news.reg.df, select = vars_names[-1])
+new_data <- cbind(cleaned.news.df$popularity, news.reg.df$shares, d2)
+names(new_data)[names(new_data) == "cleaned.news.df$popularity"] <- "popularity"
+#saving newdataset and adding the shares and popularity variables
+write.csv(new_data,'cleaned_data_2.csv')
+dim(new_data)
+```
+
+## Principle Component Analysis
+
+```{r}
+news.pca.df <- new_data
+#removing categorical variables since PCA works only with numerical data
+samp2 <- news.pca.df[,1]
+news.pca.df <- news.pca.df[-c( 1,24:33)]
+#applying PCA
+news.pca <- prcomp(news.pca.df, center = TRUE,scale. = TRUE)
+summary(news.pca)
+#plotting 
+install.packages("devtools")
+install.packages("ggbiplot")
+library(devtools)
+library(ggbiplot)
+#PCA 1 & PCA 2
+ggbiplot(news.pca,ellipse=TRUE, circle=TRUE,obs.scale = 1 , var.scale = 1,var.axes=FALSE, alpha=0, groups=samp2) +
+  ggtitle("PCA of Online News Popularity (PCA1 & PCA2)")+
+  theme_minimal()+
+  theme(legend.position = "bottom")
+
+
+```
+
+## Understanding Correlations
+
+```{r, results='asis'}
+#storing correlations
+install.packages("xtable")
+library(xtable)
+news.cor.df <-  new_data
+news.cor.df <- news.cor.df[-c(1)]
+news.cor <- round(cor(news.cor.df),3)
+upper<- news.cor
+upper[upper.tri(news.cor)]<-""
+upper<-as.data.frame(upper)
+print(xtable(upper), type = "html" )
+
+```
+## Split data into training, validation and test
+```{r}
+#raw data split
+set.seed(9)
+train.index <- sample(row.names(new_data), 0.5*dim(new_data))
+train.df <- new_data[train.index, ]
+notTrain.index <- setdiff(row.names(new_data), train.index)
+notTrain.df <-new_data[notTrain.index,]
+# 0.6 refers to 60% of the NOT training set which equals 30% of the Data Frame
+valid.index <- sample(row.names(notTrain.df), 0.6*dim(notTrain.df))
+valid.df<- notTrain.df[valid.index,] 
+test.index <- setdiff(row.names(notTrain.df), valid.index)
+test.df <- notTrain.df[test.index,]
+# Data can now be saved 
+write.csv(train.df,'train.csv')
+write.csv(valid.df,'valid.csv')
+write.csv(test.df,'test.csv')
+
+```
+
+
+### The data has now been cleaned and transformed and is ready for analysis. 
